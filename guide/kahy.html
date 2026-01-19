@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Building and Installing KaHyPar Python Bindings</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    h1, h2 {
+      margin-top: 2rem;
+    }
+    pre {
+      background: #f6f8fa;
+      padding: 1rem;
+      overflow-x: auto;
+      border-radius: 6px;
+      margin: 0.75rem 0;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.95em;
+    }
+    .note {
+      background: #fffbe6;
+      border-left: 4px solid #f2c94c;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Building and Installing the KaHyPar Python Module from Source</h1>
+
+<p>
+This guide shows how to build KaHyPar’s Python bindings from source and manually install the resulting shared library into
+Python’s <code>site-packages</code>.
+It works on an Apple M4 Pro chip with Python <code>3.12.8</code>.
+For background on the project, see the KaHyPar website:
+<a href="https://kahypar.org/" target="_blank" rel="noopener noreferrer">kahypar.org</a>.
+</p>
+
+<h2>1. Clone the KaHyPar repository</h2>
+<p>Clone the repository with required submodules.</p>
+<pre><code class="language-bash">git clone --depth=1 --recursive https://github.com/kahypar/kahypar.git</code></pre>
+
+<p>Move into the repository directory.</p>
+<pre><code class="language-bash">cd kahypar</code></pre>
+
+<h2>2. Create and enter the build directory</h2>
+<p>KaHyPar uses an out-of-tree build layout.</p>
+<pre><code class="language-bash">mkdir -p build
+cd build</code></pre>
+
+<h2>3. Build the Python bindings</h2>
+<p>Enter the Python build directory and compile the module.</p>
+<pre><code class="language-bash">cd python
+make</code></pre>
+
+<h2>4. Locate the compiled shared library</h2>
+<p>After building, a shared object (<code>.so</code>) file should be present.</p>
+<pre><code class="language-bash">ls -lh *.so</code></pre>
+
+<div class="note">
+  <strong>Note:</strong>
+  The filename may differ depending on your Python version (for example, it may include <code>cpython-312</code> in the name).
+  Use the exact <code>.so</code> filename you see here in the copy step below.
+</div>
+
+<h2>5. Find your Python site-packages directory</h2>
+<p>Determine where Python installs packages.</p>
+<pre><code class="language-bash">SITEPKG=$(python -c "import site; print(site.getsitepackages()[0])")</code></pre>
+
+<h2>6. Install the module manually</h2>
+<p>Copy the compiled shared library into <code>site-packages</code>.</p>
+<pre><code class="language-bash">cp kahypar*.so "$SITEPKG/kahypar.so"</code></pre>
+
+<div class="note">
+  <strong>Note:</strong>
+  This copies whatever <code>kahypar*.so</code> you built into <code>site-packages</code> under the stable name
+  <code>kahypar.so</code>, so <code>import kahypar</code> works consistently.
+  If multiple matches exist, copy the specific file name instead of using the wildcard.
+</div>
+
+<h2>7. Return to your original directory</h2>
+<pre><code class="language-bash">cd ../../../</code></pre>
+
+<h2>8. Verify the installation</h2>
+<p>Check that Python can successfully import KaHyPar.</p>
+<pre><code class="language-bash">python -c 'import kahypar; print("Success! Attributes:", [x for x in dir(kahypar) if not x.startswith("_")])'</code></pre>
+
+<div class="note">
+  <strong>Common pitfalls:</strong>
+  <ul>
+    <li>Ensure <code>python</code> and <code>make</code> target the same Python version.</li>
+    <li>If you are using a virtual environment, <code>SITEPKG</code> should point inside that environment.</li>
+    <li>Rebuild after upgrading Python (the <code>.so</code> is Python-version-specific).</li>
+  </ul>
+</div>
+
+</body>
+</html>
