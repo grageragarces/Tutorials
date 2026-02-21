@@ -59,6 +59,10 @@ It works on an Apple M4 Pro chip with Python <code>3.12.8</code>.
 <p>KaHyPar uses an out-of-tree build layout.</p>
 <pre><code class="language-bash">mkdir -p build
 cd build</code></pre>
+<pre><code class="language-bash"></code>cmake .. \
+  -DPYTHON_EXECUTABLE=$(python3 -c "import sys; print(sys.executable)") \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DKAHYPAR_PYTHON_INTERFACE=ON</code></pre>
 
 <h2>3. Build the Python bindings</h2>
 <p>Enter the Python build directory and compile the module.</p>
