@@ -80,35 +80,41 @@ make</code></pre>
 </div>
 
 <h2>5. Find your Python site-packages directory</h2>
-<p>Determine where Python installs packages.</p>
-<pre><code class="language-bash">SITEPKG=$(python -c "import site; print(site.getsitepackages()[0])")</code></pre>
+<p>Determine where Python installs packages. Note: this uses <strong>fish shell</strong> syntax.</p>
+<pre><code class="language-bash">set SITEPKG (python -c "import site; print(site.getsitepackages()[0])")</code></pre>
 
 <h2>6. Install the module manually</h2>
-<p>Copy the compiled shared library into <code>site-packages</code>.</p>
-<pre><code class="language-bash">cp kahypar*.so "$SITEPKG/kahypar.so"</code></pre>
-
+<p>Copy the compiled shared library into <code>site-packages</code> using the exact versioned filename.</p>
+<pre><code class="language-bash">cp kahypar.cpython-313-darwin.so "$SITEPKG/kahypar.cpython-313-darwin.so"</code></pre>
 <div class="note">
-  <strong>Note:</strong>
-  This copies whatever <code>kahypar*.so</code> you built into <code>site-packages</code> under the stable name
-  <code>kahypar.so</code>, so <code>import kahypar</code> works consistently.
-  If multiple matches exist, copy the specific file name instead of using the wildcard.
+<strong>Note:</strong>
+  Use the exact filename rather than a wildcard or a renamed <code>kahypar.so</code> — Python resolves
+  imports using the versioned name (<code>cpython-313-darwin</code>). Renaming it will cause
+  <code>import kahypar</code> to fail on some platforms.
 </div>
 
-<h2>7. Return to your original directory</h2>
+<h2>7. Copy the KaHyPar configuration files</h2>
+<p>The partitioner requires <code>.ini</code> config files at runtime. Copy them from the source tree.</p>
+<pre><code class="language-bash">mkdir -p "$SITEPKG/kahypar/bin"
+cp config/*.ini "$SITEPKG/kahypar/bin/"</code></pre>
+
+<h2>8. Return to your original directory</h2>
 <pre><code class="language-bash">cd ../../../</code></pre>
 
-<h2>8. Verify the installation</h2>
+<h2>9. Verify the installation</h2>
 <p>Check that Python can successfully import KaHyPar.</p>
-<pre><code class="language-bash">python -c 'import kahypar; print("Success! Attributes:", [x for x in dir(kahypar) if not x.startswith("_")])'</code></pre>
-
+<pre><code class="language-bash">python -c "import kahypar; print('OK:', [x for x in dir(kahypar) if not x.startswith('_')])"</code></pre>
+<p>Expected output:</p>
+<pre><code>OK: ['ConnectivitySet', 'Context', 'Hypergraph', 'connectivityMinusOne', 'createHypergraphFromFile', 'cut', 'imbalance', 'partition', 'soed']</code></pre>
 <div class="note">
-  <strong>Common pitfalls:</strong>
-  <ul>
-    <li>Ensure <code>python</code> and <code>make</code> target the same Python version.</li>
-    <li>If you are using a virtual environment, <code>SITEPKG</code> should point inside that environment.</li>
-    <li>Rebuild after upgrading Python (the <code>.so</code> is Python-version-specific).</li>
-  </ul>
+<strong>Common pitfalls:</strong>
+<ul>
+<li>Use <strong>fish shell</strong> syntax (<code>set VAR (cmd)</code>) — bash-style <code>VAR=$(cmd)</code> will not work in fish.</li>
+<li>Ensure <code>python</code> and <code>make</code> target the same Python version.</li>
+<li>If you are using a virtual environment, <code>SITEPKG</code> should point inside that environment.</li>
+<li>Rebuild after upgrading Python (the <code>.so</code> is Python-version-specific).</li>
+<li>Missing <code>.ini</code> files will cause a <code>FileNotFoundError</code> at runtime even if the import succeeds.</li>
+</ul>
 </div>
-
 </body>
 </html>
