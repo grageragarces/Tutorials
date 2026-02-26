@@ -96,7 +96,9 @@ make</code></pre>
 <h2>7. Copy the KaHyPar configuration files</h2>
 <p>The partitioner requires <code>.ini</code> config files at runtime. Copy them from the source tree.</p>
 <pre><code class="language-bash">mkdir -p "$SITEPKG/kahypar/bin"
-cp config/*.ini "$SITEPKG/kahypar/bin/"</code></pre>
+cp kahypar.cpython-313-darwin.so "$SITEPKG/kahypar/"
+echo "" > "$SITEPKG/kahypar/__init__.py"  # or copy the real one if it exists
+cp ../../config/*.ini "$SITEPKG/kahypar/config/"</code></pre>
 
 <h2>8. Return to your original directory</h2>
 <pre><code class="language-bash">cd ../../../</code></pre>
