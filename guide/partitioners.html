@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Hypergraph Partitioners: Installation and Usage Guide</title>
+  <style>
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      max-width: 920px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+    }
+    h1, h2, h3 {
+      margin-top: 2rem;
+    }
+    h2 {
+      border-bottom: 1px solid #e1e4e8;
+      padding-bottom: 0.3rem;
+    }
+    pre {
+      background: #f6f8fa;
+      padding: 1rem;
+      overflow-x: auto;
+      border-radius: 6px;
+      margin: 0.75rem 0;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 0.93em;
+    }
+    .note {
+      background: #fffbe6;
+      border-left: 4px solid #f2c94c;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    .context-box {
+      background: #f0f4ff;
+      border-left: 4px solid #5b8dee;
+      padding: 0.75rem 1rem;
+      margin: 1rem 0;
+    }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1.5rem 0;
+      font-size: 0.93em;
+    }
+    th, td {
+      border: 1px solid #d0d7de;
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+    th {
+      background: #f6f8fa;
+    }
+    .toc {
+      background: #f6f8fa;
+      border: 1px solid #d0d7de;
+      border-radius: 6px;
+      padding: 1rem 1.5rem;
+      margin: 1.5rem 0;
+      display: inline-block;
+    }
+    .toc li {
+      margin: 0.25rem 0;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Hypergraph Partitioners: Installation and Usage</h1>
+<p><em>June 2026</em></p>
+<p><a href="../index.html">← Back to other guides</a></p>
+
+<p>
+This guide covers six hypergraph partitioners that you can use as baselines or state-of-the-art references
+when benchmarking your own partitioning algorithms.
+All of them solve the same problem: partition the vertices of a hypergraph into <em>k</em> balanced
+blocks while minimising the number of cut hyperedges.
+The tutorial was written with Distributed Quantum Computing researchers in mind (you shall see references to "circuits" as QASM), 
+but can be used as a guideline beyond this community.
+</p>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#problem">Problem statement and common interface</a></li>
+    <li><a href="#fm">FM — Fiduccia-Mattheyses local search</a></li>
+    <li><a href="#greedy">Greedy — constructive greedy</a></li>
+    <li><a href="#stocg">Stochastic Greedy</a></li>
+    <li><a href="#ea">Evolutionary Algorithm</a></li>
+    <li><a href="#kahypar">KaHyPar — multilevel partitioner</a></li>
+    <li><a href="#zoltan">Zoltan PHG — parallel multilevel partitioner</a></li>
+    <li><a href="#comparison">Quick comparison</a></li>
+    <li><a href="#qasm">Bonus: QASM to HDH</a></li>
+  </ol>
+</div>
+
+
+<!-- ============================================================ -->
+<h2 id="problem">1. Problem statement and common interface</h2>
+
+<p>
+A <em>hypergraph</em> <strong>H = (V, E)</strong> consists of a vertex set <strong>V</strong>
+and a set of hyperedges <strong>E</strong>, where each hyperedge is a subset of <strong>V</strong>
+of arbitrary size (unlike a graph, where edges always connect exactly two vertices).
+</p>
+<p>
+The <strong>k-way minimum cut</strong> problem asks: partition <strong>V</strong> into
+<em>k</em> non-overlapping blocks <em>V<sub>1</sub>, …, V<sub>k</sub></em> such that
+</p>
+<ul>
+  <li><strong>Balance:</strong> each block has at most ⌈|V|/k × (1 + ε)⌉ vertices, and</li>
+  <li><strong>Objective:</strong> the number of <em>cut</em> hyperedges — those whose vertices span more than one block — is minimised.</li>
+</ul>
+
+<h3>Common Python interface (HDH library)</h3>
+
+<div class="note">
+  <strong>About the HDH library:</strong>
+  The FM, Greedy, Stochastic Greedy, and Evolutionary partitioners in this guide are part of
+  <a href="https://github.com/grageragarces/HDH" target="_blank" rel="noopener noreferrer">HDH (Hybrid Dependency Hypergraph)</a>,
+  a Python library developed to provide a unified hypergraph-based intermediate representation
+  for quantum programs, along with tools for workflow analysis and partitioning.
+  It will be used as the consistent hypergraph abstraction to evaluate all circuits through this tutorial.
+  Full documentation is available at
+  <a href="https://grageragarces.github.io/HDH/" target="_blank" rel="noopener noreferrer">grageragarces.github.io/HDH</a>.
+</div>
+
+<p>
+FM, Greedy, Stochastic Greedy, and the Evolutionary Algorithm are available through the
+<a href="hdh.html">HDH</a> Python library.
+Install it with:
+</p>
+<pre><code class="language-bash">pip install hdh</code></pre>
+
+<p>All four share the same input representation:</p>
+
+<pre><code class="language-python">n_vertices  = 8                          # integer — total number of vertices
+hyperedges  = [[0,1,2], [1,3,4], [4,5,6,7]]  # list of lists of vertex indices
+k           = 2                          # number of output blocks
+epsilon     = 0.05                       # allowed imbalance (5 %)
+</code></pre>
+
+<p>
+The returned value is the <strong>cut count</strong>: an integer equal to the number of
+hyperedges that span more than one block in the computed partition.
+Where the partition assignment itself is also needed, each function additionally returns
+a list <code>assignment</code> of length <code>n_vertices</code>,
+where <code>assignment[v]</code> is the block index (0-based) of vertex <code>v</code>.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="fm">2. FM — Fiduccia-Mattheyses local search</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  Introduced by Fiduccia and Mattheyses in 1982, FM is the cornerstone local-search
+  heuristic for graph and hypergraph partitioning.
+  Each pass sweeps all vertices in decreasing order of <em>gain</em>
+  (the reduction in cut if the vertex moves to another block),
+  "locking" each vertex after it moves.
+  The best balance-feasible prefix of each sweep is kept as the output.
+  The algorithm is fast (O(|V| + |E|) per pass) and effective as a
+  <em>refinement</em> step, but its solution quality depends heavily on the starting partition.
+  In the multilevel pipeline (KaHyPar, Zoltan) it is used as a local refinement kernel.
+</div>
+
+<h3>Installation</h3>
+<p>Included in HDH:</p>
+<pre><code class="language-bash">pip install hdh</code></pre>
+
+<h3>Running</h3>
+<pre><code class="language-python">from hdh.partitioners import fm_partition
+
+cut, assignment = fm_partition(
+    n_vertices,
+    hyperedges,
+    k,
+    epsilon,
+    max_passes=25,   # maximum FM sweep iterations
+)
+</code></pre>
+
+<h3>Output</h3>
+<pre><code class="language-python">cut         # int: number of cut hyperedges
+assignment  # list[int] of length n_vertices: block index per vertex
+</code></pre>
+
+<div class="note">
+  <strong>Tip:</strong>
+  FM is sensitive to the initial partition.
+  Running it from multiple random starts and keeping the best result is a simple but
+  effective strategy.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="greedy">3. Greedy — constructive greedy</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  The greedy partitioner is the simplest constructive baseline.
+  It processes hyperedges in order and assigns each unassigned vertex to the block
+  that already contains the most of that hyperedge's vertices (breaking ties at random).
+  Balance is enforced by capping block sizes.
+  Quality is typically the weakest of the six methods here,
+  but it runs in O(|V| + |E|) time and requires no configuration, making it
+  a reliable sanity-check lower-bound for solution quality.
+</div>
+
+<h3>Installation</h3>
+<pre><code class="language-bash">pip install hdh</code></pre>
+
+<h3>Running</h3>
+<pre><code class="language-python">from hdh.partitioners import greedy_partition
+
+cut, assignment = greedy_partition(
+    n_vertices,
+    hyperedges,
+    k,
+    epsilon,
+)
+</code></pre>
+
+<h3>Output</h3>
+<pre><code class="language-python">cut         # int
+assignment  # list[int]
+</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="stocg">4. Stochastic Greedy</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  Stochastic Greedy (StocG) extends the deterministic greedy with a time-budget loop:
+  it repeatedly runs a greedy pass with a randomised vertex/edge ordering, applies
+  a local-improvement step, and keeps the best-seen solution until a wall-clock deadline.
+  The result monotonically improves with more time, which makes it straightforward
+  to trade speed for quality.
+  It is the default strategy in the DQC benchmarking repository and tends to outperform
+  plain greedy and FM at equal wall-clock time for typical circuit sizes.
+</div>
+
+<h3>Installation</h3>
+<pre><code class="language-bash">pip install hdh</code></pre>
+
+<h3>Running</h3>
+<pre><code class="language-python">from hdh.partitioners import stochastic_greedy_partition
+
+cut, assignment = stochastic_greedy_partition(
+    n_vertices,
+    hyperedges,
+    k,
+    epsilon=0.05,
+    time_cap=30,   # seconds of wall-clock budget
+    seed=42,
+)
+</code></pre>
+
+<h3>Output</h3>
+<pre><code class="language-python">cut         # int: best cut found within time_cap
+assignment  # list[int]
+</code></pre>
+
+<div class="note">
+  <strong>Reproducibility:</strong>
+  Set <code>seed</code> explicitly when comparing methods across runs.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="ea">5. Evolutionary Algorithm</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  The Evolutionary Algorithm (EA) maintains a population of partitions and evolves it
+  through tournament selection, uniform partition crossover, random mutation, and balance repair.
+  Elite solutions are preserved across generations, and the run terminates early when the
+  best cut stops improving for <code>patience</code> consecutive generations.
+  EA typically produces the best solution quality of the four HDH methods at the cost of
+  longer runtime, making it suitable as a reference when a time budget of minutes is acceptable.
+</div>
+
+<h3>Installation</h3>
+<pre><code class="language-bash">pip install hdh</code></pre>
+
+<h3>Running</h3>
+<pre><code class="language-python">from hdh.partitioners import ea_partition
+
+cut, assignment = ea_partition(
+    n_vertices,
+    hyperedges,
+    k,
+    epsilon,
+    pop_size=40,
+    max_generations=80,
+    patience=20,      # stop if no improvement for this many generations
+    elite_size=2,
+    tournament_k=3,
+    mut_rate=0.04,
+    seed=42,
+)
+</code></pre>
+
+<h3>Output</h3>
+<pre><code class="language-python">cut         # int: cut of the best individual in the final population
+assignment  # list[int]
+</code></pre>
+
+<div class="note">
+  <strong>Note:</strong>
+  <code>patience</code> is the most impactful parameter for controlling runtime.
+  Reduce it for a faster but potentially lower-quality run.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="kahypar">6. KaHyPar — multilevel hypergraph partitioner</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  KaHyPar (<em>Karlsruhe Hypergraph Partitioning</em>) is the current state of the art for
+  sequential hypergraph partitioning.
+  It uses a <em>multilevel</em> strategy: coarsen the hypergraph by contracting clusters of
+  similar vertices, compute an initial partition on the coarsened graph, then
+  uncoarsen step-by-step while refining with FM at each level.
+  Community detection during coarsening and a portfolio of cut-objective variants
+  (k-KaHyPar, r-KaHyPar) make it very competitive on both small and large instances.
+  KaHyPar is the recommended baseline when the best known solution quality is needed.
+</div>
+
+<h3>Installation</h3>
+<p>
+KaHyPar must be built from source.
+See the dedicated guide for step-by-step instructions (tested on Apple M4 Pro, Python 3.12):
+</p>
+<p><a href="kahy.html">Building and Installing KaHyPar Python Bindings →</a></p>
+
+<h3>Running</h3>
+<pre><code class="language-python">import kahypar as kh
+
+# Build the hypergraph object.
+# edge_weights and vertex_weights can be lists of ones if unweighted.
+edge_weights   = [1] * len(hyperedges)
+vertex_weights = [1] * n_vertices
+# Flatten hyperedges and build the index array.
+edge_indices = [0]
+edge_vector  = []
+for he in hyperedges:
+    edge_vector.extend(he)
+    edge_indices.append(len(edge_vector))
+
+hg = kh.Hypergraph(
+    n_vertices,
+    len(hyperedges),
+    edge_indices,
+    edge_vector,
+    k,
+    edge_weights,
+    vertex_weights,
+)
+
+ctx = kh.Context()
+ctx.loadINIconfiguration("cut_kKaHyPar_sea20.ini")  # see config/ in source tree
+ctx.setK(k)
+ctx.setEpsilon(epsilon)
+ctx.setSeed(42)
+
+kh.partition(hg, ctx)
+
+cut        = kh.cut(hg)
+assignment = [hg.blockID(v) for v in range(n_vertices)]
+</code></pre>
+
+<h3>Configuration files</h3>
+<p>
+KaHyPar requires an <code>.ini</code> configuration file that controls coarsening,
+initial partitioning, and refinement parameters.
+The canonical files ship with the source:
+</p>
+<pre><code>kahypar/config/
+  cut_kKaHyPar_sea20.ini   ← recommended for cut objective, k-way
+  cut_rKaHyPar.ini         ← recursive bisection variant
+</code></pre>
+
+<h3>Output</h3>
+<pre><code class="language-python">cut        # int — kh.cut(hg) after kh.partition(hg, ctx)
+assignment # list[int] — [hg.blockID(v) for v in range(n_vertices)]
+</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="zoltan">7. Zoltan PHG — parallel multilevel partitioner</h2>
+
+<div class="context-box">
+  <strong>Context:</strong>
+  Zoltan is a parallel combinatorial scientific computing toolkit developed at
+  Sandia National Laboratories.
+  Its <em>PHG</em> (Parallel HyperGraph) component implements a parallel multilevel
+  hypergraph partitioner based on the same coarsen/partition/refine strategy as KaHyPar,
+  but designed for distributed-memory MPI runs.
+  For sequential use on a laptop it typically produces slightly worse cut quality than KaHyPar
+  but is the reference tool for scalability experiments on clusters.
+</div>
+
+<h3>Installation</h3>
+
+<h4>Option A — Homebrew (macOS)</h4>
+<pre><code class="language-bash">brew install trilinos    # Zoltan ships as part of Trilinos
+</code></pre>
+<p>Trilinos installs headers and libraries under <code>$(brew --prefix)/include/trilinos</code>
+and <code>$(brew --prefix)/lib</code>.</p>
+
+<h4>Option B — Build from source</h4>
+<pre><code class="language-bash">git clone --depth=1 https://github.com/trilinos/Trilinos.git
+cd Trilinos
+mkdir -p build && cd build
+cmake .. \
+  -DTrilinos_ENABLE_Zoltan=ON \
+  -DTrilinos_ENABLE_ALL_PACKAGES=OFF \
+  -DBUILD_SHARED_LIBS=ON \
+  -DCMAKE_BUILD_TYPE=Release
+make -j$(sysctl -n hw.physicalcpu)
+sudo make install
+</code></pre>
+
+<h4>Compile the C wrapper</h4>
+<p>
+The repository ships a thin C driver (<code>zoltan_phg_partition.c</code>) that reads the
+hypergraph from stdin, calls Zoltan PHG, and prints the cut count to stdout.
+Compile it once:
+</p>
+<pre><code class="language-bash">ZOLTAN_PREFIX=$(brew --prefix trilinos)   # or your install prefix
+mpicc -O2 -o zoltan_phg_partition zoltan_phg_partition.c \
+  -I"$ZOLTAN_PREFIX/include" \
+  -L"$ZOLTAN_PREFIX/lib" \
+  -lzoltan -lm
+</code></pre>
+
+<h3>Running</h3>
+<p>The driver reads from stdin using a simple text protocol.</p>
+
+<h4>Input format (stdin)</h4>
+<pre><code>n_vertices n_hyperedges k
+v0 v1 v2          ← vertices of hyperedge 0
+v0 v3             ← vertices of hyperedge 1
+...
+</code></pre>
+
+<h4>Calling from Python via subprocess</h4>
+<pre><code class="language-python">import subprocess
+
+def build_stdin(n_vertices, hyperedges, k):
+    lines = [f"{n_vertices} {len(hyperedges)} {k}"]
+    for he in hyperedges:
+        lines.append(" ".join(map(str, he)))
+    return "\n".join(lines)
+
+stdin_data = build_stdin(n_vertices, hyperedges, k)
+
+result = subprocess.run(
+    ["./zoltan_phg_partition"],
+    input=stdin_data,
+    capture_output=True,
+    text=True,
+    check=True,
+)
+
+cut = int(result.stdout.strip())
+</code></pre>
+
+<h4>Running with MPI (parallel)</h4>
+<pre><code class="language-bash">echo "$HYPERGRAPH_STDIN" | mpirun -n 4 ./zoltan_phg_partition
+</code></pre>
+
+<h3>Output</h3>
+<pre><code>cut    # int printed to stdout — number of cut hyperedges
+</code></pre>
+
+<div class="note">
+  <strong>Note:</strong>
+  Zoltan PHG does not currently return the per-vertex assignment through the stdin/stdout
+  driver — only the cut count.
+  If you need the full assignment, link directly against the Zoltan C library and call
+  <code>Zoltan_LB_Partition</code>.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="comparison">8. Quick comparison</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Method</th>
+      <th>Type</th>
+      <th>Typical quality</th>
+      <th>Speed</th>
+      <th>Install</th>
+      <th>Parallel</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Greedy</td>
+      <td>Constructive</td>
+      <td>Lowest baseline</td>
+      <td>Very fast — O(V+E)</td>
+      <td><code>pip install hdh</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>FM</td>
+      <td>Local search</td>
+      <td>Low–medium</td>
+      <td>Fast — O(V+E)/pass</td>
+      <td><code>pip install hdh</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Stochastic Greedy</td>
+      <td>Iterated greedy</td>
+      <td>Medium (grows with time)</td>
+      <td>Configurable via <code>time_cap</code></td>
+      <td><code>pip install hdh</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Evolutionary</td>
+      <td>Metaheuristic</td>
+      <td>Good</td>
+      <td>Slow</td>
+      <td><code>pip install hdh</code></td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>KaHyPar</td>
+      <td>Multilevel</td>
+      <td>State of the art</td>
+      <td>Medium–fast</td>
+      <td>Build from source</td>
+      <td>No</td>
+    </tr>
+    <tr>
+      <td>Zoltan PHG</td>
+      <td>Parallel multilevel</td>
+      <td>Good</td>
+      <td>Fast with MPI</td>
+      <td>Build from source / brew</td>
+      <td>Yes (MPI)</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <strong>Recommended comparison setup:</strong>
+  Use Greedy as the weakest baseline, KaHyPar as the strongest sequential reference,
+  and Stochastic Greedy or FM as practical mid-tier alternatives with controllable runtime.
+  Fix <code>epsilon = 0.05</code> and the same <code>seed</code> across all methods for fair comparisons.
+</div>
+
+<!-- ============================================================ -->
+<h2 id="qasm">9. Bonus: QASM to HDH</h2>
+
+<p>
+All six partitioners expect <code>(n_vertices, hyperedges)</code> as plain Python objects.
+When your input is a quantum circuit, the natural mapping is:
+</p>
+<ul>
+  <li><strong>vertices</strong> — qubits, indexed 0 … <code>qc.num_qubits − 1</code></li>
+  <li><strong>hyperedges</strong> — multi-qubit gates; each gate becomes one hyperedge
+      whose members are the qubit indices it acts on</li>
+</ul>
+<p>
+Single-qubit gates are excluded because they create no inter-qubit connectivity.
+Non-unitary instructions (barrier, measure, delay, snapshot) are also excluded.
+</p>
+
+<h3>Prerequisites</h3>
+<pre><code class="language-bash">pip install qiskit hdh</code></pre>
+
+<h3>HDH converter (from a QuantumCircuit object)</h3>
+<p>
+If you already have a <code>QuantumCircuit</code> in memory, HDH's converter module
+produces an HDH graph object in one call.
+</p>
+<pre><code class="language-python">from qiskit import QuantumCircuit
+from hdh.converters import from_qiskit
+
+qc = QuantumCircuit.from_qasm_file("circuit.qasm")
+hdh_graph = from_qiskit(qc)
+
+# Extract the raw representation for the partitioners
+n_vertices = hdh_graph.num_vertices
+hyperedges = hdh_graph.hyperedges      # list[list[int]]
+</code></pre>
+
+<div class="note">
+  <strong>Note:</strong>
+  The exact attribute names (<code>.num_vertices</code>, <code>.hyperedges</code>) depend on
+  the HDH version installed — check <code>dir(hdh_graph)</code> or the
+  <a href="https://grageragarces.github.io/HDH/" target="_blank" rel="noopener noreferrer">HDH documentation</a>
+  if they differ.
+  Path A is always safe because it only depends on Qiskit.
+</div>
+
+<h3>End-to-end example</h3>
+<p>Convert a QASM file and run all four HDH partitioners on it:</p>
+<pre><code class="language-python">from qiskit import QuantumCircuit
+from hdh.partitioners import (
+    greedy_partition,
+    fm_partition,
+    stochastic_greedy_partition,
+    ea_partition,
+)
+
+SKIP = {"barrier", "snapshot", "delay", "label", "measure", "reset"}
+
+def qasm_to_hypergraph(path):
+    qc = QuantumCircuit.from_qasm_file(path)
+    qubit_index = {q: i for i, q in enumerate(qc.qubits)}
+    hyperedges = []
+    for inst in qc.data:
+        if inst.operation.name in SKIP:
+            continue
+        if len(inst.qubits) >= 2:
+            edge = list(dict.fromkeys(qubit_index[q] for q in inst.qubits))
+            if len(edge) >= 2:
+                hyperedges.append(edge)
+    return qc.num_qubits, hyperedges
+
+n_vertices, hyperedges = qasm_to_hypergraph("circuit.qasm")
+k       = 2
+epsilon = 0.05
+
+results = {
+    "greedy": greedy_partition(n_vertices, hyperedges, k, epsilon),
+    "fm":     fm_partition(n_vertices, hyperedges, k, epsilon),
+    "stocg":  stochastic_greedy_partition(n_vertices, hyperedges, k, epsilon, time_cap=30, seed=42),
+    "ea":     ea_partition(n_vertices, hyperedges, k, epsilon, seed=42),
+}
+
+for name, (cut, _) in results.items():
+    print(f"{name:8s}  cut={cut}")
+</code></pre>
+
+<div class="note">
+  <strong>Common pitfalls:</strong>
+  <ul>
+    <li>OpenQASM 2 files use <code>QuantumCircuit.from_qasm_file</code>; OpenQASM 3 requires
+        <code>qiskit.qasm3.load</code> (Qiskit ≥ 1.0).</li>
+    <li>If <code>num_qubits</code> is large but most qubits never appear in a two-qubit gate,
+        the hypergraph will have many isolated vertices — this is correct and expected.</li>
+    <li>Gates that act on the same qubit twice (e.g. some custom unitaries) are deduplicated
+        by <code>dict.fromkeys</code>, which keeps the edge valid.</li>
+  </ul>
+</div>
+
+</body>
+</html>
